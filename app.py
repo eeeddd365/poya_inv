@@ -1,148 +1,141 @@
 import streamlit as st
-from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, RTCConfiguration
-import cv2
-from pyzbar import pyzbar
 from supabase import create_client, Client
-import numpy as np
+import pandas as pd
 
-# 1. 介面優化
-st.set_page_config(page_title="寶雅快速庫存 - 極速版", layout="centered")
+# 1. 頁面配置與美化
+st.set_page_config(page_title="寶雅庫存管理系統", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
     <style>
-    /* 專業掃描框外框 */
-    .scan-container {
-        position: relative;
-        border: 4px solid #00FF00;
-        border-radius: 15px;
-        overflow: hidden;
-        margin-bottom: 20px;
+    .main { background-color: #f8f9fa; }
+    .stButton>button { width: 100%; border-radius: 8px; font-weight: bold; height: 3em; }
+    .stTextInput>div>div>input { background-color: #ffffff; }
+    /* 卡片式樣式 */
+    .inventory-card {
+        padding: 15px;
+        border-radius: 10px;
+        background-color: white;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        margin-bottom: 15px;
+        border-left: 5px solid #ff4b4b;
     }
-    /* 動態紅光掃描線 */
-    .scan-line {
-        position: absolute;
-        top: 0; left: 0; width: 100%; height: 4px;
-        background: rgba(255, 0, 0, 0.9);
-        box-shadow: 0 0 15px 5px rgba(255, 0, 0, 0.6);
-        animation: scan 1.5s linear infinite;
-        z-index: 10;
-    }
-    @keyframes scan { 0% { top: 0%; } 100% { top: 100%; } }
-    /* 掃描成功提示色 */
-    .stSuccess { animation: pulse 0.5s; }
-    @keyframes pulse { 0% { opacity: 0.5; } 100% { opacity: 1; } }
     </style>
     """, unsafe_allow_html=True)
 
-# 2. 資料庫連線 (直接填入你的 Key)
-SUPABASE_URL = "https://bxynxysqdfmnxazftzvk.supabase.co"
-SUPABASE_KEY = "sb_publishable_AxgVxJm1--U6NQJWD_N8ng_yHbBVV-S"
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+# 2. 資料庫連線 (使用你的 Key)
+URL = "https://bxynxysqdfmnxazftzvk.supabase.co"
+KEY = "sb_publishable_AxgVxJm1--U6NQJWD_N8ng_yHbBVV-S"
 
-# 3. 強化版條碼處理器 (支援 QR Code + 各類條碼)
-class BarcodeProcessor(VideoTransformerBase):
-    def transform(self, frame):
-        img = frame.to_ndarray(format="bgr24")
+@st.cache_resource
+def init_connection():
+    return create_client(URL, KEY)
+
+supabase = init_connection()
+
+# 3. 導覽選單
+with st.sidebar:
+    st.title("🏪 POYA 管理中心")
+    st.subheader("北屯東山二店")
+    menu = st.radio("功能選單", ["📦 商品入庫", "📤 商品出庫", "📋 庫存總覽"])
+    st.divider()
+    st.info("💡 提示：手機版請點擊左上角「>」開啟選單")
+
+# --- 功能 1：商品入庫 ---
+if menu == "📦 商品入庫":
+    st.header("📦 商品入庫登記")
+    with st.form("in_form", clear_on_submit=True):
+        col1, col2 = st.columns(2)
+        with col1:
+            barcode_in = st.text_input("📋 商品條碼 (必填)", placeholder="輸入或掃描條碼")
+            name = st.text_input("🏷️ 商品名稱", placeholder="例如：我的美麗日記面膜")
+            location = st.text_input("📍 儲位位置", placeholder="例如：A1-05-3")
+        with col2:
+            qty = st.number_input("🔢 入庫數量", min_value=1, value=1)
+            note = st.text_area("📝 備註", placeholder="批號或效期說明")
         
-        # 轉換成灰階提高識別率
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        # 增加對比度
-        gray = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)[1]
+        submit = st.form_submit_button("🔥 確認入庫儲存")
         
-        # 掃描一維與二維條碼
-        barcodes = pyzbar.decode(gray)
-        
-        for barcode in barcodes:
-            barcode_data = barcode.data.decode("utf-8")
-            
-            # 存入 Session State 觸發前端更新
-            if "last_barcode" not in st.session_state or st.session_state.last_barcode != barcode_data:
-                st.session_state.last_barcode = barcode_data
-            
-            # 在畫面畫出偵測框
-            (x, y, w, h) = barcode.rect
-            cv2.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 3)
-            cv2.putText(img, "SUCCESS!", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-            
-        return img
-
-# 4. 主介面設計
-st.title("⚡ 寶雅極速庫存系統")
-st.caption("請對準商品條碼或 QR Code，掃描成功後會自動彈出表單")
-
-# 初始化掃描結果
-if "last_barcode" not in st.session_state:
-    st.session_state.last_barcode = None
-
-# 掃描區域
-with st.container():
-    st.markdown('<div class="scan-container"><div class="scan-line"></div>', unsafe_allow_html=True)
-    webrtc_ctx = webrtc_streamer(
-        key="fast-scanner",
-        video_transformer_factory=BarcodeProcessor,
-        rtc_configuration=RTCConfiguration(
-            {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
-        ),
-        video_html_attrs={
-            "playsInline": True, "autoPlay": True, "muted": True, "controls": False,
-        },
-        media_stream_constraints={
-            "video": {
-                "facingMode": "environment",
-                "focusMode": "continuous",
-                "width": {"ideal": 1280}, "height": {"ideal": 720}
-            },
-            "audio": False
-        },
-    )
-    st.markdown('</div>', unsafe_allow_html=True)
-
-# 5. 掃描後的連動反應 (這是快速建立的關鍵)
-if st.session_state.last_barcode:
-    barcode = st.session_state.last_barcode
-    
-    # 強力提示
-    st.success(f"🎯 掃描成功！條碼編號：{barcode}")
-    
-    # 立即從資料庫抓取現有資料
-    try:
-        res = supabase.table("inventory").select("*").eq("barcode", barcode).execute()
-        existing_item = res.data[0] if res.data else None
-    except:
-        existing_item = None
-
-    # 快速填寫表單
-    with st.expander("📝 點擊填寫庫存資訊", expanded=True):
-        with st.form("inventory_form", clear_on_submit=True):
-            col1, col2 = st.columns(2)
-            with col1:
-                item_name = st.text_input("📦 商品名稱", value=existing_item['name'] if existing_item else "")
-                location = st.text_input("📍 儲位編號", value=existing_item['location'] if existing_item else "", placeholder="例如: B2-12")
-            with col2:
-                quantity = st.number_input("🔢 入庫數量", min_value=1, value=1)
-                
-            save_btn = st.form_submit_button("🔥 立即存檔")
-            
-            if save_btn:
-                new_data = {
-                    "barcode": barcode,
-                    "name": item_name,
-                    "quantity": quantity,
-                    "location": location
-                }
-                if existing_item:
-                    supabase.table("inventory").update(new_data).eq("barcode", barcode).execute()
+        if submit:
+            if not barcode_in:
+                st.error("❌ 請輸入條碼！")
+            else:
+                # 檢查是否已有該商品
+                check = supabase.table("inventory").select("*").eq("barcode", barcode_in).execute()
+                if check.data:
+                    new_qty = check.data[0]['quantity'] + qty
+                    supabase.table("inventory").update({
+                        "quantity": new_qty, 
+                        "name": name if name else check.data[0]['name'], 
+                        "location": location if location else check.data[0]['location'], 
+                        "note": note
+                    }).eq("barcode", barcode_in).execute()
+                    st.success(f"✅ 更新成功！現有總庫存：{new_qty}")
                 else:
-                    supabase.table("inventory").insert(new_data).execute()
-                
-                st.balloons() # 撒花慶祝
-                st.toast("資料已儲存到 Supabase！", icon="✅")
-                # 重置掃描狀態，準備下一次掃描
-                st.session_state.last_barcode = None
-                st.rerun()
+                    supabase.table("inventory").insert({
+                        "barcode": barcode_in, 
+                        "name": name, 
+                        "quantity": qty, 
+                        "location": location, 
+                        "note": note
+                    }).execute()
+                    st.success("✨ 新商品入庫成功！")
 
-# 6. 底部的快速預覽
-if st.checkbox("🔍 檢視庫存清單"):
-    all_res = supabase.table("inventory").select("*").order("created_at", descending=True).limit(5).execute()
-    if all_res.data:
-        st.table(all_res.data)
+# --- 功能 2：商品出庫 ---
+elif menu == "📤 商品出庫":
+    st.header("📤 商品出庫作業")
+    search_q = st.text_input("🔍 搜尋關鍵字", placeholder="輸入條碼或名稱關鍵字...")
+    
+    if search_q:
+        # 模糊搜尋
+        res = supabase.table("inventory").select("*").or_(f"barcode.ilike.%{search_q}%,name.ilike.%{search_q}%").execute()
+        if res.data:
+            for item in res.data:
+                with st.container():
+                    st.markdown(f"""<div class="inventory-card">
+                        <b>品名：{item['name']}</b><br>
+                        條碼：{item['barcode']}<br>
+                        📍 儲位：{item['location']} | 📦 現有庫存：{item['quantity']}
+                    </div>""", unsafe_allow_html=True)
+                    
+                    # 建立每一行的出庫小表單
+                    c1, c2 = st.columns([3, 1])
+                    with c1:
+                        out_qty = st.number_input(f"取出數量", min_value=1, max_value=item['quantity'], key=f"qty_{item['barcode']}")
+                    with c2:
+                        # 修正後的關鍵點：使用 item['barcode']
+                        if st.button("確認", key=f"btn_{item['barcode']}"):
+                            new_total = item['quantity'] - out_qty
+                            supabase.table("inventory").update({"quantity": new_total}).eq("barcode", item['barcode']).execute()
+                            st.toast(f"✅ {item['name']} 已出庫 {out_qty} 件")
+                            st.rerun()
+        else:
+            st.warning("查無此商品。")
+
+# --- 功能 3：庫存總覽 ---
+elif menu == "📋 庫存總覽":
+    st.header("📋 庫存總覽報表")
+    res = supabase.table("inventory").select("*").order("created_at", descending=True).execute()
+    
+    if res.data:
+        df = pd.DataFrame(res.data)
+        # 美化表格顯示
+        display_df = df[['barcode', 'name', 'quantity', 'location', 'note']].copy()
+        display_df.columns = ['條碼', '品名', '庫存量', '儲位', '備註']
+        
+        st.dataframe(display_df, use_container_width=True)
+        
+        # 下方的卡片式視圖
+        st.subheader("🖼️ 快速視圖")
+        cols = st.columns(3)
+        for idx, item in enumerate(res.data):
+            with cols[idx % 3]:
+                st.markdown(f"""
+                <div style="background-color:white; padding:10px; border-radius:10px; border:1px solid #ddd; margin-bottom:10px;">
+                    <h4 style="margin:0;">📦 {item['name']}</h4>
+                    <p style="color:gray; font-size:12px; margin:5px 0;">條碼: {item['barcode']}</p>
+                    <b style="color:#ff4b4b;">數量: {item['quantity']}</b><br>
+                    <small>📍 {item['location']}</small>
+                </div>
+                """, unsafe_allow_html=True)
+    else:
+        st.info("目前資料庫為空，請先進行入庫。")
