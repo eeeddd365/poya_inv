@@ -3,5 +3,5 @@ streamlit-webrtc
 supabase
 opencv-python-headless
 pyzbar
-pillow
 numpy
+pillow
